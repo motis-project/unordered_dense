@@ -1,0 +1,4 @@
+[cista]
+  url=git@github.com:felixguendling/cista.git
+  branch=master
+  commit=44d0aad5e4765812ae0506d4b804b37eae872c0e

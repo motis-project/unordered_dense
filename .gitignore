@@ -1,4 +1,8 @@
-build
+/deps
+/.idea
+/*build*
+/.pkg.mutex
+/.pkg.lock
 builddir
 .cache
 .vscode
