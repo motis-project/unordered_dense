@@ -1,7 +1,7 @@
 ///////////////////////// ankerl::unordered_dense::{map, set} /////////////////////////
 
 // A fast & densely stored hashmap and hashset based on robin-hood backward shift deletion.
-// Version 4.0.1
+// Version 4.1.0
 // https://github.com/martinus/unordered_dense
 //
 // Licensed under the MIT License <http://opensource.org/licenses/MIT>.
@@ -31,8 +31,8 @@
 
 // see https://semver.org/spec/v2.0.0.html
 #define ANKERL_UNORDERED_DENSE_VERSION_MAJOR 4 // NOLINT(cppcoreguidelines-macro-usage) incompatible API changes
-#define ANKERL_UNORDERED_DENSE_VERSION_MINOR 0 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible functionality
-#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 1 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible bug fixes
+#define ANKERL_UNORDERED_DENSE_VERSION_MINOR 1 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible functionality
+#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 0 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible bug fixes
 
 // API versioning with inline namespace, see https://www.foonathan.net/2018/11/inline-namespaces/
 
@@ -68,6 +68,11 @@
 #    define ANKERL_UNORDERED_DENSE_NOINLINE __declspec(noinline)
 #else
 #    define ANKERL_UNORDERED_DENSE_NOINLINE __attribute__((noinline))
+#endif
+
+// defined in unordered_dense.cpp
+#if !defined(ANKERL_UNORDERED_DENSE_EXPORT)
+#    define ANKERL_UNORDERED_DENSE_EXPORT
 #endif
 
 #if ANKERL_UNORDERED_DENSE_CPP_VERSION < 201703L
@@ -157,7 +162,7 @@ namespace detail {
 // hardcodes seed and the secret, reformattes the code, and clang-tidy fixes.
 namespace detail::wyhash {
 
-static inline void mum(uint64_t* a, uint64_t* b) {
+inline void mum(uint64_t* a, uint64_t* b) {
 #    if defined(__SIZEOF_INT128__)
     __uint128_t r = *a;
     r *= *b;
@@ -187,30 +192,30 @@ static inline void mum(uint64_t* a, uint64_t* b) {
 }
 
 // multiply and xor mix function, aka MUM
-[[nodiscard]] static inline auto mix(uint64_t a, uint64_t b) -> uint64_t {
+[[nodiscard]] inline auto mix(uint64_t a, uint64_t b) -> uint64_t {
     mum(&a, &b);
     return a ^ b;
 }
 
 // read functions. WARNING: we don't care about endianness, so results are different on big endian!
-[[nodiscard]] static inline auto r8(const uint8_t* p) -> uint64_t {
+[[nodiscard]] inline auto r8(const uint8_t* p) -> uint64_t {
     uint64_t v{};
     std::memcpy(&v, p, 8U);
     return v;
 }
 
-[[nodiscard]] static inline auto r4(const uint8_t* p) -> uint64_t {
+[[nodiscard]] inline auto r4(const uint8_t* p) -> uint64_t {
     uint32_t v{};
     std::memcpy(&v, p, 4);
     return v;
 }
 
 // reads 1, 2, or 3 bytes
-[[nodiscard]] static inline auto r3(const uint8_t* p, size_t k) -> uint64_t {
+[[nodiscard]] inline auto r3(const uint8_t* p, size_t k) -> uint64_t {
     return (static_cast<uint64_t>(p[0]) << 16U) | (static_cast<uint64_t>(p[k >> 1U]) << 8U) | p[k - 1];
 }
 
-[[maybe_unused]] [[nodiscard]] static inline auto hash(void const* key, size_t len) -> uint64_t {
+[[maybe_unused]] [[nodiscard]] inline auto hash(void const* key, size_t len) -> uint64_t {
     static constexpr auto secret = std::array{UINT64_C(0xa0761d6478bd642f),
                                               UINT64_C(0xe7037ed1a0b428db),
                                               UINT64_C(0x8ebc6af09c88c6e3),
@@ -257,13 +262,13 @@ static inline void mum(uint64_t* a, uint64_t* b) {
     return mix(secret[1] ^ len, mix(a ^ secret[1], b ^ seed));
 }
 
-[[nodiscard]] static inline auto hash(uint64_t x) -> uint64_t {
+[[nodiscard]] inline auto hash(uint64_t x) -> uint64_t {
     return detail::wyhash::mix(x, UINT64_C(0x9E3779B97F4A7C15));
 }
 
 } // namespace detail::wyhash
 
-template <typename T, typename Enable = void>
+ANKERL_UNORDERED_DENSE_EXPORT template <typename T, typename Enable = void>
 struct hash {
     auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
         -> uint64_t {
@@ -598,23 +603,17 @@ public:
         : m_blocks(vec_alloc(alloc)) {}
 
     segmented_vector(segmented_vector&& other, Allocator alloc)
-        : m_blocks(vec_alloc(alloc)) {
-        if (other.get_allocator() == alloc) {
-            *this = std::move(other);
-        } else {
-            // Oh my, allocator is different so we need to copy everything.
-            append_everything_from(std::move(other));
-        }
+        : segmented_vector(alloc) {
+        *this = std::move(other);
     }
-
-    segmented_vector(segmented_vector&& other) noexcept
-        : m_blocks(std::move(other.m_blocks))
-        , m_size(std::exchange(other.m_size, {})) {}
 
     segmented_vector(segmented_vector const& other, Allocator alloc)
         : m_blocks(vec_alloc(alloc)) {
         append_everything_from(other);
     }
+
+    segmented_vector(segmented_vector&& other) noexcept
+        : segmented_vector(std::move(other), get_allocator()) {}
 
     segmented_vector(segmented_vector const& other) {
         append_everything_from(other);
@@ -632,8 +631,14 @@ public:
     auto operator=(segmented_vector&& other) noexcept -> segmented_vector& {
         clear();
         dealloc();
-        m_blocks = std::move(other.m_blocks);
-        m_size = std::exchange(other.m_size, {});
+        if (other.get_allocator() == get_allocator()) {
+            m_blocks = std::move(other.m_blocks);
+            m_size = std::exchange(other.m_size, {});
+        } else {
+            // make sure to construct with other's allocator!
+            m_blocks = std::vector<pointer, vec_alloc>(vec_alloc(other.get_allocator()));
+            append_everything_from(std::move(other));
+        }
         return *this;
     }
 
@@ -906,8 +911,8 @@ protected:
         auto ba = bucket_alloc(m_values.get_allocator());
         if (nullptr != m_buckets) {
             bucket_alloc_traits::deallocate(ba, m_buckets, bucket_count());
+            m_buckets = nullptr;
         }
-        m_buckets = nullptr;
         m_num_buckets = 0;
         m_max_bucket_capacity = 0;
     }
@@ -1169,15 +1174,8 @@ public:
         : table(std::move(other), other.m_values.get_allocator()) {}
 
     table(table&& other, allocator_type const& alloc) noexcept
-        : m_values(std::move(other.m_values), alloc)
-        , m_buckets(std::exchange(other.m_buckets, nullptr))
-        , m_num_buckets(std::exchange(other.m_num_buckets, 0))
-        , m_max_bucket_capacity(std::exchange(other.m_max_bucket_capacity, 0))
-        , m_max_load_factor(std::exchange(other.m_max_load_factor, default_max_load_factor))
-        , m_hash(std::exchange(other.m_hash, {}))
-        , m_equal(std::exchange(other.m_equal, {}))
-        , m_shifts(std::exchange(other.m_shifts, initial_shifts)) {
-        other.m_values.clear();
+        : m_values(alloc) {
+        *this = std::move(other);
     }
 
     table(std::initializer_list<value_type> ilist,
@@ -1221,14 +1219,30 @@ public:
         if (&other != this) {
             deallocate_buckets(); // deallocate before m_values is set (might have another allocator)
             m_values = std::move(other.m_values);
-            m_buckets = std::exchange(other.m_buckets, nullptr);
-            m_num_buckets = std::exchange(other.m_num_buckets, 0);
-            m_max_bucket_capacity = std::exchange(other.m_max_bucket_capacity, 0);
-            m_max_load_factor = std::exchange(other.m_max_load_factor, default_max_load_factor);
-            m_hash = std::exchange(other.m_hash, {});
-            m_equal = std::exchange(other.m_equal, {});
-            m_shifts = std::exchange(other.m_shifts, initial_shifts);
             other.m_values.clear();
+
+            // we can only reuse m_buckets when both maps have the same allocator!
+            if (get_allocator() == other.get_allocator()) {
+                m_buckets = std::exchange(other.m_buckets, nullptr);
+                m_num_buckets = std::exchange(other.m_num_buckets, 0);
+                m_max_bucket_capacity = std::exchange(other.m_max_bucket_capacity, 0);
+                m_shifts = std::exchange(other.m_shifts, initial_shifts);
+                m_max_load_factor = std::exchange(other.m_max_load_factor, default_max_load_factor);
+                m_hash = std::exchange(other.m_hash, {});
+                m_equal = std::exchange(other.m_equal, {});
+            } else {
+                // set max_load_factor *before* copying the other's buckets, so we have the same
+                // behavior
+                m_max_load_factor = other.m_max_load_factor;
+
+                // copy_buckets sets m_buckets, m_num_buckets, m_max_bucket_capacity, m_shifts
+                copy_buckets(other);
+                // clear's the other's buckets so other is now already usable.
+                other.clear_buckets();
+                m_hash = other.m_hash;
+                m_equal = other.m_equal;
+            }
+            // map "other" is now already usable, it's empty.
         }
         return *this;
     }
@@ -1810,60 +1824,66 @@ public:
 
 } // namespace detail
 
-template <class Key,
-          class T,
-          class Hash = hash<Key>,
-          class KeyEqual = std::equal_to<Key>,
-          class AllocatorOrContainer = std::allocator<std::pair<Key, T>>,
-          class Bucket = bucket_type::standard>
+ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
+                                        class T,
+                                        class Hash = hash<Key>,
+                                        class KeyEqual = std::equal_to<Key>,
+                                        class AllocatorOrContainer = std::allocator<std::pair<Key, T>>,
+                                        class Bucket = bucket_type::standard>
 using map = detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, false>;
 
-template <class Key,
-          class T,
-          class Hash = hash<Key>,
-          class KeyEqual = std::equal_to<Key>,
-          class AllocatorOrContainer = std::allocator<std::pair<Key, T>>,
-          class Bucket = bucket_type::standard>
+ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
+                                        class T,
+                                        class Hash = hash<Key>,
+                                        class KeyEqual = std::equal_to<Key>,
+                                        class AllocatorOrContainer = std::allocator<std::pair<Key, T>>,
+                                        class Bucket = bucket_type::standard>
 using segmented_map = detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, true>;
 
-template <class Key,
-          class Hash = hash<Key>,
-          class KeyEqual = std::equal_to<Key>,
-          class AllocatorOrContainer = std::allocator<Key>,
-          class Bucket = bucket_type::standard>
+ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
+                                        class Hash = hash<Key>,
+                                        class KeyEqual = std::equal_to<Key>,
+                                        class AllocatorOrContainer = std::allocator<Key>,
+                                        class Bucket = bucket_type::standard>
 using set = detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, false>;
 
-template <class Key,
-          class Hash = hash<Key>,
-          class KeyEqual = std::equal_to<Key>,
-          class AllocatorOrContainer = std::allocator<Key>,
-          class Bucket = bucket_type::standard>
+ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
+                                        class Hash = hash<Key>,
+                                        class KeyEqual = std::equal_to<Key>,
+                                        class AllocatorOrContainer = std::allocator<Key>,
+                                        class Bucket = bucket_type::standard>
 using segmented_set = detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, true>;
 
 #    if defined(ANKERL_UNORDERED_DENSE_PMR)
 
 namespace pmr {
 
-template <class Key,
-          class T,
-          class Hash = hash<Key>,
-          class KeyEqual = std::equal_to<Key>,
-          class Bucket = bucket_type::standard>
+ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
+                                        class T,
+                                        class Hash = hash<Key>,
+                                        class KeyEqual = std::equal_to<Key>,
+                                        class Bucket = bucket_type::standard>
 using map =
     detail::table<Key, T, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<std::pair<Key, T>>, Bucket, false>;
 
-template <class Key,
-          class T,
-          class Hash = hash<Key>,
-          class KeyEqual = std::equal_to<Key>,
-          class Bucket = bucket_type::standard>
+ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
+                                        class T,
+                                        class Hash = hash<Key>,
+                                        class KeyEqual = std::equal_to<Key>,
+                                        class Bucket = bucket_type::standard>
 using segmented_map =
     detail::table<Key, T, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<std::pair<Key, T>>, Bucket, true>;
 
-template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::standard>
+ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
+                                        class Hash = hash<Key>,
+                                        class KeyEqual = std::equal_to<Key>,
+                                        class Bucket = bucket_type::standard>
 using set = detail::table<Key, void, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<Key>, Bucket, false>;
 
-template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::standard>
+ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
+                                        class Hash = hash<Key>,
+                                        class KeyEqual = std::equal_to<Key>,
+                                        class Bucket = bucket_type::standard>
 using segmented_set =
     detail::table<Key, void, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<Key>, Bucket, true>;
 
@@ -1883,14 +1903,14 @@ using segmented_set =
 
 namespace std { // NOLINT(cert-dcl58-cpp)
 
-template <class Key,
-          class T,
-          class Hash,
-          class KeyEqual,
-          class AllocatorOrContainer,
-          class Bucket,
-          class Pred,
-          bool IsSegmented>
+ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
+                                        class T,
+                                        class Hash,
+                                        class KeyEqual,
+                                        class AllocatorOrContainer,
+                                        class Bucket,
+                                        class Pred,
+                                        bool IsSegmented>
 // NOLINTNEXTLINE(cert-dcl58-cpp)
 auto erase_if(ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, IsSegmented>& map,
               Pred pred) -> size_t {
