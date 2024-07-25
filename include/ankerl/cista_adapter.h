@@ -74,7 +74,9 @@ struct serializable_table
         using cista::static_type_hash;
         h = h.combine(cista::hash("ankerl::table"));
         h = static_type_hash(cista::null<Key>(), h);
-        h = static_type_hash(cista::null<T>(), h);
+        if constexpr (!std::is_same_v<T, void>) {
+            h = static_type_hash(cista::null<T>(), h);
+        }
         h = static_type_hash(cista::null<AllocatorOrContainer>(), h);
         h = static_type_hash(cista::null<Bucket>(), h);
         h = h.combine(IsSegmented);
