@@ -1776,13 +1776,21 @@ public:
         }
     }
 
-    // observers //////////////////////////////////////////////////////////////
-
-    auto hash_function() const -> hasher {
+    auto hash_function() -> hasher& {
         return m_hash;
     }
 
-    auto key_eq() const -> key_equal {
+    auto key_eq() -> key_equal& {
+        return m_equal;
+    }
+
+    // observers //////////////////////////////////////////////////////////////
+
+    auto hash_function() const -> hasher const& {
+        return m_hash;
+    }
+
+    auto key_eq() const -> key_equal const& {
         return m_equal;
     }
 
