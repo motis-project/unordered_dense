@@ -19,6 +19,10 @@ template <class Key,
           bool IsSegmented>
 struct serializable_table
     : ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, IsSegmented> {
+    using parent = ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, IsSegmented>;
+
+    using parent::parent;
+
     template <typename Ctx>
     friend void serialize(Ctx& c, serializable_table const* origin, cista::offset_t const pos) {
         using Type = std::decay_t<decltype(*origin)>;
